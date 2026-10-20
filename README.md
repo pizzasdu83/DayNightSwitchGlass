@@ -1,4 +1,7 @@
 # DayNightSwitch
+This is a fork to use it on ios 26 with liquid glass
+
+# DayNightSwitch
 So I came across this awesome, kinda skeuomorphic-ish custom switch design on Dribbble and thought it was cute, so here you go:
 [![gif](https://cdn.dribbble.com/users/470545/screenshots/1909289/switch_02.gif)](https://dribbble.com/shots/1909289-Day-Night-Toggle-Button-GIF)
 
