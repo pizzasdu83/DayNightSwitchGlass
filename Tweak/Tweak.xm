@@ -31,7 +31,8 @@ static void loadPrefs(void) {
 @property (nonatomic, strong) NSNumber *dns_bypass;
 - (UIImpactFeedbackGenerator *)_impactFeedbackGenerator;
 - (void)dns_setup;
-- (void)dns_addSwitch;
+- (void)dns_addSwitchWithOn:(BOOL)on;
+- (void)dns_hideNativeVisuals;
 @end
 
 %hook UISwitch
@@ -39,33 +40,54 @@ static void loadPrefs(void) {
 %property (nonatomic, strong) DayNightSwitch *dns_dayNightSwitch;
 %property (nonatomic, strong) NSNumber *dns_bypass;
 
-- (instancetype)initWithFrame:(CGRect)arg1 {
-    id object = %orig;
+- (void)layoutSubviews {
+    %orig;
     [self dns_setup];
-    return object;
-}
-
-- (instancetype)initWithCoder:(id)arg1 {
-    id object = %orig;
-    [self dns_setup];
-    return object;
+    [self dns_hideNativeVisuals];
 }
 
 %new
 - (void)dns_setup {
-    if (enabled && !self.dns_dayNightSwitch) {
-        NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
-        if (global) {
-            [self dns_addSwitch];
-        } else if ([bundleId isEqual: @"com.apple.Preferences"]) {
-            PSSwitchTableCell *cell = (PSSwitchTableCell *)self.superview;
-            if ([cell respondsToSelector:@selector(specifier)] && [cell respondsToSelector:@selector(control)]) {
-                id spec = [cell performSelector:@selector(specifier)];
-                if ([spec respondsToSelector:@selector(identifier)]) {
-                    NSString *identifier = [spec performSelector:@selector(identifier)];
-                    if ([identifier isEqual:@"DND_TOP_LEVEL"] && [cell performSelector:@selector(control)] == self) {
-                        [self dns_addSwitch];
-                    }
+    if (!enabled) {
+        return;
+    }
+
+    CGSize size = self.bounds.size;
+    if (size.width < 1 || size.height < 1) {
+        return;
+    }
+
+    // Déjà en place : on ne refait que si la taille du UISwitch a changé
+    DayNightSwitch *current = self.dns_dayNightSwitch;
+    if (current) {
+        if (!CGSizeEqualToSize(current.bounds.size, size)) {
+            BOOL wasOn = current.on;
+            [current removeFromSuperview];
+            self.dns_dayNightSwitch = nil;
+            [self dns_addSwitchWithOn:wasOn];
+        }
+        return;
+    }
+
+    if (global) {
+        [self dns_addSwitchWithOn:self.on];
+        return;
+    }
+
+    static NSString *bundleId = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    });
+
+    if ([bundleId isEqual:@"com.apple.Preferences"]) {
+        PSSwitchTableCell *cell = (PSSwitchTableCell *)self.superview;
+        if ([cell respondsToSelector:@selector(specifier)] && [cell respondsToSelector:@selector(control)]) {
+            id spec = [cell performSelector:@selector(specifier)];
+            if ([spec respondsToSelector:@selector(identifier)]) {
+                NSString *identifier = [spec performSelector:@selector(identifier)];
+                if ([identifier isEqual:@"DND_TOP_LEVEL"] && [cell performSelector:@selector(control)] == self) {
+                    [self dns_addSwitchWithOn:self.on];
                 }
             }
         }
@@ -73,23 +95,26 @@ static void loadPrefs(void) {
 }
 
 %new
-- (void)dns_addSwitch {
-    DayNightSwitch *sub = [[DayNightSwitch alloc] initWithFrame:CGRectMake(0, 0, 51, 31)];
+- (void)dns_addSwitchWithOn:(BOOL)on {
+    // Même taille que le UISwitch natif (51x31 sur l'ancien, plus grand sur iOS 26)
+    CGRect frame = CGRectMake(0, 0, self.bounds.size.width, self.bounds.size.height);
+    DayNightSwitch *sub = [[DayNightSwitch alloc] initWithFrame:frame];
 
-    self.dns_bypass = @YES;
-    sub.on = self.on;
-    self.dns_bypass = nil;
+    sub.on = on;
 
     __weak __typeof(self) weakSelf = self;
-    sub.changeAction = ^(BOOL on, BOOL shouldNotifyChanged) {
+    sub.changeAction = ^(BOOL newOn, BOOL shouldNotifyChanged) {
         __strong __typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) {
+            return;
+        }
 
-        self.dns_bypass = @YES;
+        strongSelf.dns_bypass = @YES;
         BOOL isOn = strongSelf.on;
-        strongSelf.on = on;
-        self.dns_bypass = nil;
+        strongSelf.on = newOn;
+        strongSelf.dns_bypass = nil;
 
-        if (isOn != on) {
+        if (isOn != newOn) {
             [[strongSelf _impactFeedbackGenerator] impactOccurred];
         }
 
@@ -101,10 +126,36 @@ static void loadPrefs(void) {
     self.dns_dayNightSwitch = sub;
 
     [self addSubview:sub];
+    [self bringSubviewToFront:sub];
+}
+
+%new
+- (void)dns_hideNativeVisuals {
+    DayNightSwitch *sub = self.dns_dayNightSwitch;
+    if (!sub) {
+        return;
+    }
+
+    for (UIView *v in self.subviews) {
+        if (v == sub) {
+            continue;
+        }
+        v.hidden = YES;
+        v.alpha = 0;
+    }
+
+    for (CALayer *l in self.layer.sublayers) {
+        if (l == sub.layer) {
+            continue;
+        }
+        l.hidden = YES;
+    }
 }
 
 - (void)setOn:(BOOL)arg1 animated:(BOOL)arg2 notifyingVisualElement:(BOOL)arg3 {
     %orig;
+    [self dns_hideNativeVisuals];
+
     if ([self.dns_bypass boolValue]) {
         return;
     }
